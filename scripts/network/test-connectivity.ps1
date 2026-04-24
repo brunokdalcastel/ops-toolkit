@@ -3,9 +3,9 @@
 Diagnóstico rápido de conectividade de rede para um host ou endereço IP.
 
 .DESCRIPTION
-Realiza três verificações sequenciais e independentes: resolução DNS, ping (ICMP)
-e traceroute resumido. Retorna um objeto estruturado com os resultados. Falha em
-um bloco não cancela as demais verificações. Compatível com PowerShell 5.1+.
+Realiza três verificações independentes: resolução DNS, ping (ICMP) e traceroute
+resumido. Retorna um objeto estruturado com os resultados. Falha em um bloco não
+cancela as demais verificações. Compatível com PowerShell 5.1+.
 
 .PARAMETER Target
 Nome de host ou endereço IP a ser testado. Obrigatório.
@@ -44,53 +44,71 @@ param(
     [int]$Count = 4
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-$result = [PSCustomObject]@{
-    Target       = $Target
-    DnsResolved  = $false
-    IpAddress    = $null
-    PingSuccess  = $false
-    AvgLatencyMs = $null
-    HopCount     = $null
-    TestedAt     = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+function Invoke-Tracert {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetHost
+    )
+    & tracert -d -h 15 $TargetHost 2>&1
 }
 
-# DNS resolution
-try {
-    $dnsResult = Resolve-DnsName -Name $Target -ErrorAction Stop
-    $ipEntry = $dnsResult | Where-Object { $_.Type -eq 'A' -or $_.Type -eq 'AAAA' } | Select-Object -First 1
-    if ($null -ne $ipEntry) {
-        $result.DnsResolved = $true
-        $result.IpAddress = $ipEntry.IPAddress
+function Get-ConnectivityResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Target,
+
+        [Parameter()]
+        [ValidateRange(1, 100)]
+        [int]$Count = 4
+    )
+
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    $result = [PSCustomObject]@{
+        Target       = $Target
+        DnsResolved  = $false
+        IpAddress    = $null
+        PingSuccess  = $false
+        AvgLatencyMs = $null
+        HopCount     = $null
+        TestedAt     = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     }
-}
-catch {
-    Write-Verbose "DNS resolution failed for '$Target': $_"
-}
 
-# Ping
-try {
-    $pingResults = Test-Connection -ComputerName $Target -Count $Count -ErrorAction Stop
-    $result.PingSuccess = $true
-    $avgLatency = ($pingResults | Measure-Object -Property ResponseTime -Average).Average
-    $result.AvgLatencyMs = [math]::Round($avgLatency)
-}
-catch {
-    Write-Verbose "Ping failed for '$Target': $_"
-}
-
-# Traceroute — conta hops até o destino
-try {
-    $tracertOutput = & tracert -d -h 15 $Target 2>&1
-    $hopLines = $tracertOutput | Where-Object {
-        $_ -match '^\s+\d+\s'
+    try {
+        $dnsResult = Resolve-DnsName -Name $Target -ErrorAction Stop
+        $ipEntry = $dnsResult | Where-Object { $_.Type -eq 'A' -or $_.Type -eq 'AAAA' } | Select-Object -First 1
+        if ($null -ne $ipEntry) {
+            $result.DnsResolved = $true
+            $result.IpAddress = $ipEntry.IPAddress
+        }
     }
-    $result.HopCount = ($hopLines | Measure-Object).Count
-}
-catch {
-    Write-Verbose "Traceroute failed for '$Target': $_"
+    catch {
+        Write-Verbose "DNS resolution failed for '$Target': $_"
+    }
+
+    try {
+        $pingResults = Test-Connection -ComputerName $Target -Count $Count -ErrorAction Stop
+        $result.PingSuccess = $true
+        $avgLatency = ($pingResults | Measure-Object -Property ResponseTime -Average).Average
+        $result.AvgLatencyMs = [math]::Round($avgLatency)
+    }
+    catch {
+        Write-Verbose "Ping failed for '$Target': $_"
+    }
+
+    try {
+        $tracertOutput = Invoke-Tracert -TargetHost $Target
+        $hopLines = $tracertOutput | Where-Object { $_ -match '^\s+\d+\s' }
+        $result.HopCount = ($hopLines | Measure-Object).Count
+    }
+    catch {
+        Write-Verbose "Traceroute failed for '$Target': $_"
+    }
+
+    $result
 }
 
-$result
+Get-ConnectivityResult -Target $Target -Count $Count
