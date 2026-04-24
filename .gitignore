@@ -1,0 +1,22 @@
+# PowerShell build output
+*.exe
+*.psd1.bak
+
+# MkDocs generated site
+site/
+
+# OS artifacts
+Thumbs.db
+.DS_Store
+desktop.ini
+ehthumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Pester test results
+testResults*.xml
+coverage.xml
